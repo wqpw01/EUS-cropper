@@ -1,0 +1,14 @@
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Generated data and local agent state
+output/
+.superpowers/
+.claude/
+
+# Local environments and editor files
+.venv/
+venv/
+.DS_Store
