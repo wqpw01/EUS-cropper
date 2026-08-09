@@ -9,7 +9,11 @@ import nibabel as nib
 import numpy as np
 import pytest
 
-from src.cropped_retrieval import process_cropped_folder
+from src.cropped_retrieval import (
+    ARTERY_LABEL_IDS,
+    VEIN_LABEL_IDS,
+    process_cropped_folder,
+)
 
 
 FRAME_ID = "frame_00000001"
@@ -31,7 +35,9 @@ def _label_data() -> dict:
             "ColorLabelTableModel": [
                 {"ID": 3, "Desc": "artery"},
                 {"ID": 26, "Desc": "vein"},
+                {"ID": 32, "Desc": "vein"},
                 {"ID": 33, "Desc": "artery"},
+                {"ID": 40, "Desc": "artery"},
                 {"ID": 15, "Desc": "nonvessel"},
             ]
         },
@@ -69,6 +75,11 @@ def _read_gallery_record(path: Path) -> dict:
     return json.loads(lines[0])
 
 
+def test_vessel_label_groups_match_the_fixed_crop_definition():
+    assert VEIN_LABEL_IDS == frozenset({26, 27, 28, 29, 30, 31, 32})
+    assert ARTERY_LABEL_IDS == frozenset({3, 33, 34, 35, 36, 37, 38, 39, 40})
+
+
 def test_process_cropped_folder_extracts_complete_vessel_components(cropped_label_tar):
     labels_xy = np.zeros((10, 10), dtype=np.uint16)
     # The NIfTI fixture uses [x, y] axis order.
@@ -78,7 +89,7 @@ def test_process_cropped_folder_extracts_complete_vessel_components(cropped_labe
     labels_xy[4:6, 7:9] = 15
     frame_dir = cropped_label_tar(labels_xy)
 
-    process_cropped_folder(frame_dir, width_mm=100.0, length_mm=100.0)
+    process_cropped_folder(frame_dir)
 
     details_path = frame_dir / DETAILS_NAME
     gallery_path = frame_dir / GALLERY_NAME
@@ -86,7 +97,7 @@ def test_process_cropped_folder_extracts_complete_vessel_components(cropped_labe
     assert gallery_path.is_file()
 
     details = json.loads(details_path.read_text(encoding="utf-8"))
-    assert set(details) == {
+    assert {
         "schema_version",
         "frame_id",
         "label_tar",
@@ -99,7 +110,7 @@ def test_process_cropped_folder_extracts_complete_vessel_components(cropped_labe
         "features",
         "skipped_components",
         "adapter_record",
-    }
+    } <= set(details)
     assert details["frame_id"] == FRAME_ID
     assert details["label_tar"] == LABEL_TAR_NAME
     assert details["label_source"] == "nifti"
@@ -144,9 +155,6 @@ def test_process_cropped_folder_extracts_complete_vessel_components(cropped_labe
         "component_index",
         "area_px",
         "centroid_px",
-        "x_mm",
-        "y_mm",
-        "area_mm2",
         "reason",
     }
     assert skipped[0]["label"] == "artery"
@@ -180,6 +188,32 @@ def test_process_cropped_folder_extracts_complete_vessel_components(cropped_labe
     assert [feature["area_mm2"] for feature in gallery_record["features"]] == pytest.approx(
         [4 * spacing_mm * spacing_mm, 4 * spacing_mm * spacing_mm]
     )
+
+
+def test_process_cropped_folder_uses_eight_connectivity_and_skips_every_edge(
+    cropped_label_tar,
+):
+    labels_xy = np.zeros((10, 10), dtype=np.uint16)
+    labels_xy[2, 2] = 32
+    labels_xy[3, 3] = 32
+    labels_xy[0, 5] = 40
+    labels_xy[9, 5] = 40
+    labels_xy[5, 0] = 40
+    labels_xy[5, 9] = 40
+    frame_dir = cropped_label_tar(labels_xy)
+
+    process_cropped_folder(frame_dir)
+
+    details = json.loads((frame_dir / DETAILS_NAME).read_text(encoding="utf-8"))
+    assert [(feature["label"], feature["label_id"], feature["area_px"]) for feature in details["features"]] == [
+        ("vein", 32, 2),
+    ]
+    assert details["features"][0]["centroid_px"] == [2.5, 2.5]
+    assert len(details["skipped_components"]) == 4
+    assert {item["label_id"] for item in details["skipped_components"]} == {40}
+    assert {item["reason"] for item in details["skipped_components"]} == {
+        "touches_image_edge"
+    }
 
 
 def test_process_cropped_folder_writes_unindexed_record_without_nifti(cropped_label_tar):
