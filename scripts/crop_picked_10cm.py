@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw
 from tqdm import tqdm
 
 from src.config import CropRegion
+from src.cropped_retrieval import process_cropped_folder
 from src.label_processor import get_color_for_label, get_polygons_from_label, transform_label_json
 from src.picked_10cm import CROP_BOUNDS, crop_image_to_canvas, crop_label_tar
 from src.utils import find_image_files, get_label_tar_path
@@ -139,7 +140,7 @@ def _preflight(input_dir: Path) -> list[tuple[Path, Path]]:
     return items
 
 
-def _process_item(image_path: Path, label_path: Path, output_root: Path) -> None:
+def _process_item(image_path: Path, label_path: Path, output_root: Path) -> bool:
     frame_dir = output_root / image_path.stem
     frame_dir.mkdir()
 
@@ -185,6 +186,8 @@ def _process_item(image_path: Path, label_path: Path, output_root: Path) -> None
             else None
         ),
     )
+    retrieval = process_cropped_folder(frame_dir)
+    return bool(retrieval.record["features"])
 
 
 def run_batch(input_dir: Path = DEFAULT_INPUT_DIR, output_dir: Path = DEFAULT_OUTPUT_DIR) -> dict[str, int]:
@@ -200,16 +203,21 @@ def run_batch(input_dir: Path = DEFAULT_INPUT_DIR, output_dir: Path = DEFAULT_OU
     if staging_dir.exists():
         raise FileExistsError(f"Staging directory already exists: {staging_dir}")
 
+    gallery_records = 0
     try:
         staging_dir.mkdir()
         for image_path, label_path in tqdm(items, desc="Processing frames"):
-            _process_item(image_path, label_path, staging_dir)
+            gallery_records += int(_process_item(image_path, label_path, staging_dir))
         staging_dir.replace(output_dir)
     except Exception:
         shutil.rmtree(staging_dir, ignore_errors=True)
         raise
 
-    return {"total": len(items), "processed": len(items)}
+    return {
+        "total": len(items),
+        "processed": len(items),
+        "gallery_records": gallery_records,
+    }
 
 
 def main() -> None:
@@ -220,6 +228,7 @@ def main() -> None:
 
     result = run_batch(args.input_dir, args.output_dir)
     print(f"Processed {result['processed']} of {result['total']} frames")
+    print(f"Retrieval gallery frames: {result['gallery_records']}")
     print(f"Output: {args.output_dir}")
 
 

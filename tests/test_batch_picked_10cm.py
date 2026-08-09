@@ -4,6 +4,7 @@ import io
 import json
 import tarfile
 
+import nibabel as nib
 import numpy as np
 from PIL import Image
 
@@ -64,7 +65,16 @@ def _label_data() -> dict:
     }
 
 
-def test_run_batch_writes_nine_artifacts_with_vessel_only_visualizations(tmp_path):
+def _source_nifti_bytes(tmp_path) -> bytes:
+    labels_xy = np.zeros((1920, 1080), dtype=np.uint16)
+    labels_xy[700:702, 200:202] = 26
+    labels_xy[800:802, 300:302] = 3
+    nifti_path = tmp_path / "source_labels.nii.gz"
+    nib.Nifti1Image(labels_xy, np.eye(4)).to_filename(nifti_path)
+    return nifti_path.read_bytes()
+
+
+def test_run_batch_writes_retrieval_artifacts_with_vessel_only_visualizations(tmp_path):
     input_dir = tmp_path / "picked"
     output_dir = tmp_path / "picked_10cm_cropped"
     input_dir.mkdir()
@@ -79,10 +89,15 @@ def test_run_batch_writes_nine_artifacts_with_vessel_only_visualizations(tmp_pat
             "frame_00000001_jpg_Label.json",
             json.dumps(_label_data(), ensure_ascii=False).encode("utf-8"),
         )
+        _add_tar_member(
+            archive,
+            "frame_00000001_jpg_Label.nii.gz",
+            _source_nifti_bytes(tmp_path),
+        )
 
     result = run_batch(input_dir, output_dir)
 
-    assert result == {"total": 1, "processed": 1}
+    assert result == {"total": 1, "processed": 1, "gallery_records": 1}
     frame_dir = output_dir / "frame_00000001"
     assert {path.name for path in frame_dir.iterdir()} == {
         "frame_00000001.jpg",
@@ -94,6 +109,8 @@ def test_run_batch_writes_nine_artifacts_with_vessel_only_visualizations(tmp_pat
         "frame_00000001_cropped_overlay.png",
         "frame_00000001_cropped_vessel_overlay.png",
         "frame_00000001_cropped_vessel_label_white.png",
+        "frame_00000001_cropped_retrieval_features.json",
+        "frame_00000001_cropped_gallery.jsonl",
     }
     assert (frame_dir / source_image.name).read_bytes() == source_image.read_bytes()
     assert (frame_dir / source_label.name).read_bytes() == source_label.read_bytes()
@@ -123,5 +140,28 @@ def test_run_batch_writes_nine_artifacts_with_vessel_only_visualizations(tmp_pat
         }
         assert colors <= {(255, 255, 255), (255, 82, 0), (0, 188, 212)}
 
+    details = json.loads(
+        (frame_dir / "frame_00000001_cropped_retrieval_features.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert [feature["label_id"] for feature in details["features"]] == [26, 3]
+
+    gallery_record = json.loads(
+        (frame_dir / "frame_00000001_cropped_gallery.jsonl").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert gallery_record["status"] == "gallery"
+    assert gallery_record["boundary_only_png"] == (
+        "frame_00000001_cropped_vessel_label_white.png"
+    )
+    assert gallery_record["ct_overlay_png"] == "frame_00000001_cropped_vessel_overlay.png"
+    assert not (output_dir / "retrieval_gallery.jsonl").exists()
+    assert not (output_dir / "retrieval_feature_summary.json").exists()
+
     with tarfile.open(frame_dir / "frame_00000001_cropped_jpg_Label.tar", "r") as archive:
-        assert archive.getnames() == ["frame_00000001_cropped_jpg_Label.json"]
+        assert archive.getnames() == [
+            "frame_00000001_cropped_jpg_Label.json",
+            "frame_00000001_cropped_jpg_Label.nii.gz",
+        ]
