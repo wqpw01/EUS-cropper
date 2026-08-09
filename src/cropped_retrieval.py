@@ -74,7 +74,7 @@ def _read_label_image(payload: bytes, suffix: str) -> np.ndarray:
     with tempfile.TemporaryDirectory() as temporary_directory:
         path = Path(temporary_directory) / f"label{suffix}"
         path.write_bytes(payload)
-        values_xy = np.asanyarray(nib.load(str(path)).dataobj)
+        values_xy = np.asanyarray(nib.load(str(path)).dataobj).copy()
 
     if values_xy.ndim != 2:
         raise ValueError(
