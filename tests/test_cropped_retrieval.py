@@ -28,25 +28,47 @@ def _add_tar_member(archive: tarfile.TarFile, name: str, content: bytes) -> None
     archive.addfile(member, io.BytesIO(content))
 
 
-def _label_data() -> dict:
+def _label_data(frame_label_ids: list[int] | None = None) -> dict:
     return {
         "FileInfo": {"Width": 10, "Height": 10},
         "Models": {
             "ColorLabelTableModel": [
+                {"ID": 2, "Desc": "S2 liver"},
                 {"ID": 3, "Desc": "artery"},
+                {"ID": 12, "Desc": "gallbladder"},
                 {"ID": 26, "Desc": "vein"},
+                {"ID": 27, "Desc": "portal confluence"},
+                {"ID": 28, "Desc": "mesenteric vein"},
+                {"ID": 30, "Desc": "inferior vena cava"},
                 {"ID": 32, "Desc": "vein"},
                 {"ID": 33, "Desc": "artery"},
                 {"ID": 40, "Desc": "artery"},
+                {"ID": 16, "Desc": "bile duct"},
+                {"ID": 18, "Desc": "spleen"},
+                {"ID": 19, "Desc": "pancreas"},
                 {"ID": 15, "Desc": "nonvessel"},
-            ]
+            ],
+            "FrameLabelModel": {
+                "FrameLabel": [
+                    {
+                        "FrameCount": 0,
+                        "ItemType": 0,
+                        "Label": label_id,
+                        "ViewType": 3,
+                    }
+                    for label_id in frame_label_ids or []
+                ]
+            },
         },
     }
 
 
 @pytest.fixture
 def cropped_label_tar(tmp_path: Path):
-    def write(labels_xy: np.ndarray | None = None) -> Path:
+    def write(
+        labels_xy: np.ndarray | None = None,
+        frame_label_ids: list[int] | None = None,
+    ) -> Path:
         frame_dir = tmp_path / FRAME_ID
         frame_dir.mkdir()
         tar_path = frame_dir / LABEL_TAR_NAME
@@ -54,7 +76,7 @@ def cropped_label_tar(tmp_path: Path):
             _add_tar_member(
                 archive,
                 f"{FRAME_ID}_cropped_jpg_Label.json",
-                json.dumps(_label_data()).encode("utf-8"),
+                json.dumps(_label_data(frame_label_ids)).encode("utf-8"),
             )
             if labels_xy is not None:
                 nifti_path = tmp_path / "fixture_labels.nii.gz"
@@ -107,6 +129,10 @@ def test_process_cropped_folder_extracts_complete_vessel_components(cropped_labe
         "crop_size_mm",
         "pixel_spacing_mm",
         "feature_coordinate_system",
+        "organ_label_source",
+        "frame_label_organ_ids",
+        "cropped_nifti_organ_ids",
+        "organ_labels",
         "features",
         "skipped_components",
         "adapter_record",
@@ -121,21 +147,30 @@ def test_process_cropped_folder_extracts_complete_vessel_components(cropped_labe
         ("vein", 26),
         ("artery", 3),
     ]
-    assert all(
-        set(feature)
-        == {
-            "label",
-            "label_id",
-            "label_desc",
-            "component_index",
-            "area_px",
-            "centroid_px",
-            "x_mm",
-            "y_mm",
-            "area_mm2",
-        }
-        for feature in features
-    )
+    assert set(features[0]) == {
+        "label",
+        "label_id",
+        "label_desc",
+        "component_index",
+        "area_px",
+        "centroid_px",
+        "x_mm",
+        "y_mm",
+        "area_mm2",
+        "source_label_ids",
+    }
+    assert features[0]["source_label_ids"] == [26]
+    assert set(features[1]) == {
+        "label",
+        "label_id",
+        "label_desc",
+        "component_index",
+        "area_px",
+        "centroid_px",
+        "x_mm",
+        "y_mm",
+        "area_mm2",
+    }
 
     spacing_mm = 100.0 / 9
     vein = features[0]
@@ -216,8 +251,64 @@ def test_process_cropped_folder_uses_eight_connectivity_and_skips_every_edge(
     }
 
 
+def test_process_cropped_folder_unions_frame_labels_and_cropped_nifti_organs(
+    cropped_label_tar,
+):
+    labels_xy = np.zeros((10, 10), dtype=np.uint16)
+    labels_xy[1:3, 1:3] = 18
+    labels_xy[4:6, 1:3] = 30
+    labels_xy[7:9, 1:3] = 15
+    labels_xy[1:3, 6:8] = 28
+    frame_dir = cropped_label_tar(
+        labels_xy,
+        frame_label_ids=[2, 3, 12, 16, 26, 27, 28],
+    )
+
+    process_cropped_folder(frame_dir)
+
+    details = json.loads((frame_dir / DETAILS_NAME).read_text(encoding="utf-8"))
+    assert details["organ_label_source"] == "frame_label_and_cropped_nifti"
+    assert details["frame_label_organ_ids"] == [2, 3, 26, 27]
+    assert details["cropped_nifti_organ_ids"] == [18, 30]
+    assert details["organ_labels"] == [
+        "aorta",
+        "inferior_vena_cava",
+        "liver",
+        "portal_vein",
+        "spleen",
+    ]
+
+    record = _read_gallery_record(frame_dir / GALLERY_NAME)
+    assert record["organ"] == "unknown"
+    assert record["organ_label_source"] == "frame_label_and_cropped_nifti"
+    assert record["organ_labels"] == details["organ_labels"]
+
+
+def test_process_cropped_folder_merges_portal_vein_and_confluence_components(
+    cropped_label_tar,
+):
+    labels_xy = np.zeros((10, 10), dtype=np.uint16)
+    labels_xy[2, 2] = 26
+    labels_xy[3, 3] = 27
+    labels_xy[0, 5] = 27
+    frame_dir = cropped_label_tar(labels_xy, frame_label_ids=[27])
+
+    process_cropped_folder(frame_dir)
+
+    details = json.loads((frame_dir / DETAILS_NAME).read_text(encoding="utf-8"))
+    portal = [item for item in details["features"] if item["label_id"] == 26]
+    assert len(portal) == 1
+    assert portal[0]["label"] == "vein"
+    assert portal[0]["area_px"] == 2
+    assert portal[0]["source_label_ids"] == [26, 27]
+    skipped = [item for item in details["skipped_components"] if item["label_id"] == 26]
+    assert len(skipped) == 1
+    assert skipped[0]["source_label_ids"] == [27]
+    assert details["organ_labels"] == ["portal_vein"]
+
+
 def test_process_cropped_folder_writes_unindexed_record_without_nifti(cropped_label_tar):
-    frame_dir = cropped_label_tar()
+    frame_dir = cropped_label_tar(frame_label_ids=[19, 15, 16, 28])
 
     process_cropped_folder(frame_dir)
 
@@ -230,8 +321,12 @@ def test_process_cropped_folder_writes_unindexed_record_without_nifti(cropped_la
     assert details["label_source"] == "empty_label_json"
     assert details["features"] == []
     assert details["skipped_components"] == []
+    assert details["frame_label_organ_ids"] == [19]
+    assert details["cropped_nifti_organ_ids"] == []
+    assert details["organ_labels"] == ["pancreas"]
 
     gallery_record = _read_gallery_record(gallery_path)
     assert gallery_record == details["adapter_record"]
     assert gallery_record["status"] == "unindexed"
     assert gallery_record["features"] == []
+    assert gallery_record["organ_labels"] == ["pancreas"]
