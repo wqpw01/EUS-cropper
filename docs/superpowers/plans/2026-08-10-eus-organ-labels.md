@@ -395,8 +395,13 @@ Then assert:
 
 ~~~python
 assert details["frame_label_organ_ids"] == [14]
-assert details["cropped_nifti_organ_ids"] == [18]
-assert details["organ_labels"] == ["liver", "spleen"]
+assert details["cropped_nifti_organ_ids"] == [3, 18, 26]
+assert details["organ_labels"] == [
+    "aorta",
+    "liver",
+    "portal_vein",
+    "spleen",
+]
 
 catalog = json.loads((output_dir / "eus_possible_organs.json").read_text(encoding="utf-8"))
 assert catalog["schema_version"] == "eus-possible-organs/v1"
