@@ -11,6 +11,8 @@
 
 本功能只接入 `scripts/crop_picked_10cm.py`。既有裁剪图片、标签 TAR、血管可视化、边缘血管剔除和检索坐标规则保持不变。
 
+批处理完成后，还要在裁剪结果根目录生成一份固定的 `eus_possible_organs.json`。它列出 EUS 中所有可能出现的规范器官，而非只列出本次输入数据实际出现的器官。
+
 ## 方案选择
 
 采用规范器官标签数组，而不是直接输出原始中文名称或仅输出原始 ID。
@@ -42,6 +44,19 @@
 以下标签不进入 `organ_labels`：胆囊 `12, 15`，胆管 `16, 17`，`S0` 的 `13`，以及其他血管 `28, 29, 31, 32, 34--40`。未知 ID 也忽略，不产生错误。
 
 腹主动脉 (`3, 33`)、下腔静脉 (`30`) 和门静脉 (`26, 27`) 同时具有器官和血管语义。它们出现在 `organ_labels` 时，仍按现有血管规则参与特征提取。
+
+## 可能器官清单
+
+`eus_possible_organs.json` 是裁剪结果根目录的单一清单文件，包含版本和排序后的 `organs` 数组。数组固定包含上表的 11 个规范器官，每项使用以下字段：
+
+- `organ_label`：规范名称，例如 `portal_vein`。
+- `eus_label_ids`：映射到该器官的所有原始 EUS ID，升序排列。
+- `eus_label_names`：与 ID 一一对应的原始中文名称。
+- `role`：`organ` 或 `organ_and_vessel`。
+- `vessel_type`：仅双重角色时填写 `artery` 或 `vein`，其余为 `null`。
+- `canonical_vessel_label_id`：仅门静脉填写 `26`，其余为 `null`；这表明 `27` 统一归并到 `26`。
+
+因此 `aorta` 使用 ID `3, 33`、角色 `organ_and_vessel`、血管类型 `artery`；`inferior_vena_cava` 使用 ID `30`、角色 `organ_and_vessel`、血管类型 `vein`；`portal_vein` 使用 ID `26, 27`、角色 `organ_and_vessel`、血管类型 `vein`、规范血管 ID `26`。其余八个条目均为 `organ`。
 
 ## 数据流与归并规则
 
@@ -75,6 +90,7 @@ JSON-only TAR 没有裁剪后 NIfTI 时，`cropped_nifti_organ_ids` 为空，器
 - 缺失或格式异常的 `FrameLabelModel` 不报错，按无 JSON 声明处理。
 - `ColorLabelTableModel` 只用于血管特征描述，不作为器官出现的来源。
 - 既有 11 个每帧产物不增不减；只更新两个检索元数据文件的内容。
+- 根目录额外生成一个 `eus_possible_organs.json`；它不影响每帧产物计数，也不依赖本批次出现的实际标签。
 
 ## 验证
 
@@ -86,4 +102,5 @@ JSON-only TAR 没有裁剪后 NIfTI 时，`cropped_nifti_organ_ids` 为空，器
 4. `3/33`、`30`、`26/27` 同时以器官和血管语义处理。
 5. `26/27` 在血管特征中合成规范门静脉连通域，保留来源 ID 审计，触边剔除仍正确。
 6. JSON-only TAR 仅使用 `FrameLabel`；端到端批处理保留 11 项产物并写入器官元数据。
-7. 完整测试通过后，重新运行 `C:\\Users\\zhangyutang\\Desktop\\学姐标注EUS` 的固定 10 cm 裁剪，并验证桌面结果目录中的 105 帧、元数据一致性和图像尺寸。
+7. 批处理根目录生成包含 11 个规范器官、双重血管角色和门静脉 `27 -> 26` 规范化信息的 `eus_possible_organs.json`。
+8. 完整测试通过后，重新运行 `C:\\Users\\zhangyutang\\Desktop\\学姐标注EUS` 的固定 10 cm 裁剪，并验证桌面结果目录中的 105 帧、元数据一致性、器官清单和图像尺寸。
