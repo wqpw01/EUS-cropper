@@ -46,6 +46,39 @@ ORGAN_LABEL_BY_ID = {
     41: "duodenum",
 }
 PORTAL_SOURCE_LABEL_IDS = frozenset({26, 27})
+_POSSIBLE_ORGANS_SCHEMA_VERSION = "eus-possible-organs/v1"
+_EUS_LABEL_NAMES = {
+    1: "S1 第二肝门",
+    2: "S2 肝脏",
+    3: "S3 腹主动脉",
+    4: "S4 胰体",
+    5: "S5 胰尾",
+    6: "S6 脾门",
+    7: "S7 胰颈",
+    8: "S8 第一肝门",
+    9: "S9 胰头",
+    10: "S10 壶腹部",
+    11: "S11 钩突",
+    14: "肝脏",
+    18: "脾脏",
+    19: "胰腺",
+    20: "胰管",
+    21: "壶腹部",
+    22: "左侧肾上腺",
+    23: "右侧肾上腺",
+    24: "左侧肾脏",
+    25: "右侧肾脏",
+    26: "门静脉（包括分支",
+    27: "门静脉汇合部",
+    30: "下腔静脉",
+    33: "腹主动脉",
+    41: "十二指肠肠腔",
+}
+_ORGAN_VESSEL_ROLES = {
+    "aorta": ("organ_and_vessel", "artery", None),
+    "inferior_vena_cava": ("organ_and_vessel", "vein", None),
+    "portal_vein": ("organ_and_vessel", "vein", 26),
+}
 
 
 @dataclass(frozen=True)
@@ -76,6 +109,43 @@ class CroppedFeatureResult:
     feature_path: Path
     gallery_path: Path
     record: dict[str, Any]
+
+
+def possible_organs_catalog() -> dict[str, Any]:
+    """Return the fixed EUS organ vocabulary and its source-label mapping."""
+    organs: list[dict[str, Any]] = []
+    for organ_label in sorted(set(ORGAN_LABEL_BY_ID.values())):
+        label_ids = sorted(
+            label_id
+            for label_id, mapped_label in ORGAN_LABEL_BY_ID.items()
+            if mapped_label == organ_label
+        )
+        role, vessel_type, canonical_vessel_label_id = _ORGAN_VESSEL_ROLES.get(
+            organ_label, ("organ", None, None)
+        )
+        organs.append(
+            {
+                "organ_label": organ_label,
+                "eus_label_ids": label_ids,
+                "eus_label_names": [
+                    _EUS_LABEL_NAMES[label_id] for label_id in label_ids
+                ],
+                "role": role,
+                "vessel_type": vessel_type,
+                "canonical_vessel_label_id": canonical_vessel_label_id,
+            }
+        )
+    return {"schema_version": _POSSIBLE_ORGANS_SCHEMA_VERSION, "organs": organs}
+
+
+def write_possible_organs_catalog(directory: str | Path) -> Path:
+    """Write the fixed possible-organ catalog into a batch output root."""
+    path = Path(directory) / "eus_possible_organs.json"
+    path.write_text(
+        json.dumps(possible_organs_catalog(), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 def _tar_members(tar_path: Path) -> tuple[dict[str, Any], bytes | None, str | None]:

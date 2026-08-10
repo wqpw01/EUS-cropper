@@ -23,10 +23,19 @@ def _label_data() -> dict:
         "FileName": "frame_00000001_jpg",
         "Models": {
             "ColorLabelTableModel": [
+                {"ID": 3, "Desc": "腹主动脉", "Color": [0, 170, 127, 255]},
+                {"ID": 14, "Desc": "肝脏", "Color": [170, 0, 0, 255]},
                 {"ID": 15, "Color": [0, 85, 0, 255]},
+                {"ID": 18, "Desc": "脾脏", "Color": [233, 150, 122, 255]},
                 {"ID": 26, "Color": [170, 85, 255, 255]},
                 {"ID": 33, "Color": [255, 0, 0, 255]},
             ],
+            "FrameLabelModel": {
+                "FrameLabel": [
+                    {"FrameCount": 0, "ItemType": 0, "Label": 14, "ViewType": 3},
+                    {"FrameCount": 0, "ItemType": 0, "Label": 15, "ViewType": 3},
+                ]
+            },
             "PolygonModel2": None,
         },
         "Polys": [
@@ -69,6 +78,7 @@ def _source_nifti_bytes(tmp_path) -> bytes:
     labels_xy = np.zeros((1920, 1080), dtype=np.uint16)
     labels_xy[700:702, 200:202] = 26
     labels_xy[800:802, 300:302] = 3
+    labels_xy[900:902, 250:252] = 18
     nifti_path = tmp_path / "source_labels.nii.gz"
     nib.Nifti1Image(labels_xy, np.eye(4)).to_filename(nifti_path)
     return nifti_path.read_bytes()
@@ -146,6 +156,14 @@ def test_run_batch_writes_retrieval_artifacts_with_vessel_only_visualizations(tm
         )
     )
     assert [feature["label_id"] for feature in details["features"]] == [26, 3]
+    assert details["frame_label_organ_ids"] == [14]
+    assert details["cropped_nifti_organ_ids"] == [3, 18, 26]
+    assert details["organ_labels"] == [
+        "aorta",
+        "liver",
+        "portal_vein",
+        "spleen",
+    ]
 
     gallery_record = json.loads(
         (frame_dir / "frame_00000001_cropped_gallery.jsonl").read_text(
@@ -157,8 +175,23 @@ def test_run_batch_writes_retrieval_artifacts_with_vessel_only_visualizations(tm
         "frame_00000001_cropped_vessel_label_white.png"
     )
     assert gallery_record["ct_overlay_png"] == "frame_00000001_cropped_vessel_overlay.png"
+    assert gallery_record["organ_label_source"] == "frame_label_and_cropped_nifti"
+    assert gallery_record["organ_labels"] == details["organ_labels"]
     assert not (output_dir / "retrieval_gallery.jsonl").exists()
     assert not (output_dir / "retrieval_feature_summary.json").exists()
+
+    catalog = json.loads(
+        (output_dir / "eus_possible_organs.json").read_text(encoding="utf-8")
+    )
+    assert catalog["schema_version"] == "eus-possible-organs/v1"
+    assert len(catalog["organs"]) == 11
+    by_name = {item["organ_label"]: item for item in catalog["organs"]}
+    assert by_name["aorta"]["eus_label_ids"] == [3, 33]
+    assert by_name["aorta"]["role"] == "organ_and_vessel"
+    assert by_name["aorta"]["vessel_type"] == "artery"
+    assert by_name["portal_vein"]["eus_label_ids"] == [26, 27]
+    assert by_name["portal_vein"]["canonical_vessel_label_id"] == 26
+    assert by_name["liver"]["role"] == "organ"
 
     with tarfile.open(frame_dir / "frame_00000001_cropped_jpg_Label.tar", "r") as archive:
         assert archive.getnames() == [

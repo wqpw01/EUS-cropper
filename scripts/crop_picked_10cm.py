@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw
 from tqdm import tqdm
 
 from src.config import CropRegion
-from src.cropped_retrieval import process_cropped_folder
+from src.cropped_retrieval import process_cropped_folder, write_possible_organs_catalog
 from src.label_processor import get_color_for_label, get_polygons_from_label, transform_label_json
 from src.picked_10cm import CROP_BOUNDS, crop_image_to_canvas, crop_label_tar
 from src.utils import find_image_files, get_label_tar_path
@@ -208,6 +208,7 @@ def run_batch(input_dir: Path = DEFAULT_INPUT_DIR, output_dir: Path = DEFAULT_OU
         staging_dir.mkdir()
         for image_path, label_path in tqdm(items, desc="Processing frames"):
             gallery_records += int(_process_item(image_path, label_path, staging_dir))
+        write_possible_organs_catalog(staging_dir)
         staging_dir.replace(output_dir)
     except Exception:
         shutil.rmtree(staging_dir, ignore_errors=True)
