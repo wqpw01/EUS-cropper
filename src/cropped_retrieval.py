@@ -17,8 +17,55 @@ from scipy import ndimage
 
 VEIN_LABEL_IDS = frozenset({26, 27, 28, 29, 30, 31, 32})
 ARTERY_LABEL_IDS = frozenset({3, 33, 34, 35, 36, 37, 38, 39, 40})
-_LABEL_GROUPS = (("vein", VEIN_LABEL_IDS), ("artery", ARTERY_LABEL_IDS))
 _SCHEMA_VERSION = "cropped-retrieval-features/v1"
+ORGAN_LABEL_BY_ID = {
+    1: "liver",
+    2: "liver",
+    3: "aorta",
+    4: "pancreas",
+    5: "pancreas",
+    6: "spleen",
+    7: "pancreas",
+    8: "liver",
+    9: "pancreas",
+    10: "duodenum",
+    11: "pancreas",
+    14: "liver",
+    18: "spleen",
+    19: "pancreas",
+    20: "pancreas",
+    21: "duodenum",
+    22: "adrenal_gland_left",
+    23: "adrenal_gland_right",
+    24: "kidney_left",
+    25: "kidney_right",
+    26: "portal_vein",
+    27: "portal_vein",
+    30: "inferior_vena_cava",
+    33: "aorta",
+    41: "duodenum",
+}
+PORTAL_SOURCE_LABEL_IDS = frozenset({26, 27})
+
+
+@dataclass(frozen=True)
+class _VesselSpec:
+    label: str
+    label_id: int
+    source_label_ids: frozenset[int]
+
+
+_VESSEL_SPECS = (
+    _VesselSpec("vein", 26, PORTAL_SOURCE_LABEL_IDS),
+    *(
+        _VesselSpec("vein", label_id, frozenset({label_id}))
+        for label_id in (28, 29, 30, 31, 32)
+    ),
+    *(
+        _VesselSpec("artery", label_id, frozenset({label_id}))
+        for label_id in (3, 33, 34, 35, 36, 37, 38, 39, 40)
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -114,6 +161,51 @@ def _label_table(metadata: dict[str, Any]) -> dict[int, dict[str, Any]]:
     return table
 
 
+def _organ_ids_from_frame_label(metadata: dict[str, Any]) -> list[int]:
+    models = metadata.get("Models")
+    frame_model = models.get("FrameLabelModel") if isinstance(models, dict) else None
+    entries = frame_model.get("FrameLabel") if isinstance(frame_model, dict) else None
+    if not isinstance(entries, list):
+        return []
+
+    return sorted(
+        {
+            entry["Label"]
+            for entry in entries
+            if isinstance(entry, dict)
+            and isinstance(entry.get("Label"), int)
+            and not isinstance(entry.get("Label"), bool)
+            and entry["Label"] in ORGAN_LABEL_BY_ID
+        }
+    )
+
+
+def _organ_ids_from_cropped_labels(labels: np.ndarray) -> list[int]:
+    return sorted(
+        {
+            int(label_id)
+            for label_id in np.unique(labels)
+            if int(label_id) in ORGAN_LABEL_BY_ID
+        }
+    )
+
+
+def _organ_metadata(metadata: dict[str, Any], labels: np.ndarray) -> dict[str, Any]:
+    frame_ids = _organ_ids_from_frame_label(metadata)
+    nifti_ids = _organ_ids_from_cropped_labels(labels)
+    return {
+        "organ_label_source": "frame_label_and_cropped_nifti",
+        "frame_label_organ_ids": frame_ids,
+        "cropped_nifti_organ_ids": nifti_ids,
+        "organ_labels": sorted(
+            {
+                ORGAN_LABEL_BY_ID[label_id]
+                for label_id in (*frame_ids, *nifti_ids)
+            }
+        ),
+    }
+
+
 def _features(
     labels: np.ndarray,
     table: dict[int, dict[str, Any]],
@@ -126,46 +218,54 @@ def _features(
     features: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
 
-    for feature_label, label_ids in _LABEL_GROUPS:
-        for label_id in sorted(label_ids):
-            components, count = ndimage.label(labels == label_id, structure=structure)
-            for component_index in range(1, count + 1):
-                points_yx = np.argwhere(components == component_index)
-                y_values = points_yx[:, 0]
-                x_values = points_yx[:, 1]
-                base = {
-                    "label": feature_label,
-                    "label_id": label_id,
-                    "label_desc": table.get(label_id, {}).get(
-                        "description", f"label_{label_id}"
-                    ),
-                    "component_index": component_index,
-                    "area_px": int(len(points_yx)),
-                    "centroid_px": [
-                        float(np.mean(x_values)),
-                        float(np.mean(y_values)),
-                    ],
-                }
-                touches_edge = bool(
-                    np.any(x_values == 0)
-                    or np.any(x_values == width - 1)
-                    or np.any(y_values == 0)
-                    or np.any(y_values == height - 1)
-                )
-                if touches_edge:
-                    skipped.append({**base, "reason": "touches_image_edge"})
-                    continue
-
-                features.append(
+    for spec in _VESSEL_SPECS:
+        components, count = ndimage.label(
+            np.isin(labels, tuple(spec.source_label_ids)), structure=structure
+        )
+        for component_index in range(1, count + 1):
+            points_yx = np.argwhere(components == component_index)
+            y_values = points_yx[:, 0]
+            x_values = points_yx[:, 1]
+            base = {
+                "label": spec.label,
+                "label_id": spec.label_id,
+                "label_desc": table.get(spec.label_id, {}).get(
+                    "description", f"label_{spec.label_id}"
+                ),
+                "component_index": component_index,
+                "area_px": int(len(points_yx)),
+                "centroid_px": [
+                    float(np.mean(x_values)),
+                    float(np.mean(y_values)),
+                ],
+            }
+            if spec.source_label_ids == PORTAL_SOURCE_LABEL_IDS:
+                base["source_label_ids"] = sorted(
                     {
-                        **base,
-                        "x_mm": float(np.mean(x_values) * x_spacing),
-                        "y_mm": float(np.mean(y_values) * y_spacing),
-                        "area_mm2": float(
-                            len(points_yx) * x_spacing * y_spacing
-                        ),
+                        int(label_id)
+                        for label_id in np.unique(labels[y_values, x_values])
+                        if int(label_id) in spec.source_label_ids
                     }
                 )
+
+            touches_edge = bool(
+                np.any(x_values == 0)
+                or np.any(x_values == width - 1)
+                or np.any(y_values == 0)
+                or np.any(y_values == height - 1)
+            )
+            if touches_edge:
+                skipped.append({**base, "reason": "touches_image_edge"})
+                continue
+
+            features.append(
+                {
+                    **base,
+                    "x_mm": float(np.mean(x_values) * x_spacing),
+                    "y_mm": float(np.mean(y_values) * y_spacing),
+                    "area_mm2": float(len(points_yx) * x_spacing * y_spacing),
+                }
+            )
 
     return features, skipped
 
@@ -176,6 +276,7 @@ def _gallery_record(
     width_mm: float,
     length_mm: float,
     pixel_spacing_mm: tuple[float, float],
+    organ_metadata: dict[str, Any],
 ) -> dict[str, Any]:
     adapter_features = [
         {key: feature[key] for key in ("label", "x_mm", "y_mm", "area_mm2")}
@@ -187,6 +288,8 @@ def _gallery_record(
         "slice_id": f"{stem}_cropped",
         "status": "gallery" if adapter_features else "unindexed",
         "organ": "unknown",
+        "organ_label_source": organ_metadata["organ_label_source"],
+        "organ_labels": organ_metadata["organ_labels"],
         "source": "cropped_label_tar",
         "probe_point_world": center,
         "input_normal_world": [0.0, 0.0, 1.0],
@@ -246,6 +349,7 @@ def _write_artifacts(
     width_mm: float,
     length_mm: float,
     pixel_spacing_mm: tuple[float, float],
+    organ_metadata: dict[str, Any],
     record: dict[str, Any],
 ) -> CroppedFeatureResult:
     height, width = labels.shape
@@ -261,6 +365,10 @@ def _write_artifacts(
         "crop_size_mm": [width_mm, length_mm],
         "pixel_spacing_mm": list(pixel_spacing_mm),
         "feature_coordinate_system": "top_left_origin_x_right_y_down_mm",
+        "organ_label_source": organ_metadata["organ_label_source"],
+        "frame_label_organ_ids": organ_metadata["frame_label_organ_ids"],
+        "cropped_nifti_organ_ids": organ_metadata["cropped_nifti_organ_ids"],
+        "organ_labels": organ_metadata["organ_labels"],
         "features": features,
         "skipped_components": skipped,
         "adapter_record": record,
@@ -318,9 +426,10 @@ def process_cropped_folder(
         width_mm / (expected_width - 1),
         length_mm / (expected_height - 1),
     )
+    organ_metadata = _organ_metadata(metadata, labels)
     features, skipped = _features(labels, _label_table(metadata), pixel_spacing_mm)
     record = _gallery_record(
-        stem, features, width_mm, length_mm, pixel_spacing_mm
+        stem, features, width_mm, length_mm, pixel_spacing_mm, organ_metadata
     )
     return _write_artifacts(
         directory,
@@ -332,5 +441,6 @@ def process_cropped_folder(
         width_mm,
         length_mm,
         pixel_spacing_mm,
+        organ_metadata,
         record,
     )
