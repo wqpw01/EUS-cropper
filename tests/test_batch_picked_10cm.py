@@ -8,6 +8,7 @@ import nibabel as nib
 import numpy as np
 from PIL import Image
 
+import scripts.crop_picked_10cm as crop_picked_10cm
 from scripts.crop_picked_10cm import run_batch
 
 
@@ -82,6 +83,47 @@ def _source_nifti_bytes(tmp_path) -> bytes:
     nifti_path = tmp_path / "source_labels.nii.gz"
     nib.Nifti1Image(labels_xy, np.eye(4)).to_filename(nifti_path)
     return nifti_path.read_bytes()
+
+
+def test_draw_anatomical_vessel_outlines_uses_fixed_three_class_palette():
+    def shape(label_id: int, x: int, y: int) -> dict:
+        return {
+            "labelType": label_id,
+            "Points": [
+                {"Pos": [x, y, 0.0]},
+                {"Pos": [x + 2, y, 0.0]},
+                {"Pos": [x + 2, y + 2, 0.0]},
+                {"Pos": [x, y + 2, 0.0]},
+            ],
+        }
+
+    label_data = {
+        "Models": {"PolygonModel2": None},
+        "Polys": [
+            {
+                "Shapes": [
+                    shape(3, 2, 3),
+                    shape(30, 7, 3),
+                    shape(26, 12, 2),
+                    shape(27, 12, 6),
+                    shape(28, 12, 10),
+                    shape(29, 12, 14),
+                    shape(31, 17, 3),
+                ]
+            }
+        ],
+    }
+
+    result = crop_picked_10cm.draw_anatomical_vessel_outlines(
+        Image.new("RGB", (20, 20), "white"), label_data
+    )
+
+    assert result.getpixel((2, 3)) == (255, 0, 0)
+    assert result.getpixel((7, 3)) == (0, 0, 255)
+    assert {result.getpixel((12, y)) for y in (2, 6, 10, 14)} == {
+        (170, 85, 255)
+    }
+    assert result.getpixel((17, 3)) == (255, 255, 255)
 
 
 def test_run_batch_writes_retrieval_artifacts_with_vessel_only_visualizations(tmp_path):

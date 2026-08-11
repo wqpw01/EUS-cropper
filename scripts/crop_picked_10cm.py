@@ -24,6 +24,15 @@ VEIN_LABEL_IDS = {26, 27, 28, 29, 30, 31, 32}
 ARTERY_LABEL_IDS = {3, 33, 34, 35, 36, 37, 38, 39, 40}
 VEIN_COLOR = (0, 188, 212)
 ARTERY_COLOR = (255, 82, 0)
+ANATOMICAL_VESSEL_COLORS = {
+    3: (255, 0, 0),
+    33: (255, 0, 0),
+    30: (0, 0, 255),
+    26: (170, 85, 255),
+    27: (170, 85, 255),
+    28: (170, 85, 255),
+    29: (170, 85, 255),
+}
 
 
 def _read_label_json(tar_path: Path) -> dict:
@@ -101,6 +110,32 @@ def draw_vessel_outlines(image: Image.Image, label_data: dict, line_width: int =
             continue
 
         points = [(point[0], point[1]) for point in polygon["points"] if len(point) >= 2]
+        if not points:
+            continue
+        if len(points) == 1:
+            x, y = points[0]
+            draw.ellipse((x - 1, y - 1, x + 1, y + 1), fill=color)
+            continue
+
+        path = points + [points[0]] if polygon.get("closed", False) else points
+        draw.line(path, fill=color, width=line_width, joint="curve")
+
+    return canvas
+
+
+def draw_anatomical_vessel_outlines(
+    image: Image.Image, label_data: dict, line_width: int = 2
+) -> Image.Image:
+    """Draw Ao, IVC, and portal-system boundaries in their fixed palette."""
+    canvas = image.convert("RGB")
+    draw = ImageDraw.Draw(canvas)
+
+    for polygon in get_polygons_from_label(label_data):
+        color = ANATOMICAL_VESSEL_COLORS.get(polygon["label"])
+        if color is None:
+            continue
+
+        points = [tuple(point[:2]) for point in polygon["points"] if len(point) >= 2]
         if not points:
             continue
         if len(points) == 1:
