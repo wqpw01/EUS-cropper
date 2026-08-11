@@ -39,6 +39,7 @@ def _label_data(frame_label_ids: list[int] | None = None) -> dict:
                 {"ID": 26, "Desc": "vein"},
                 {"ID": 27, "Desc": "portal confluence"},
                 {"ID": 28, "Desc": "mesenteric vein"},
+                {"ID": 29, "Desc": "splenic vein"},
                 {"ID": 30, "Desc": "inferior vena cava"},
                 {"ID": 32, "Desc": "vein"},
                 {"ID": 33, "Desc": "artery"},
@@ -305,6 +306,54 @@ def test_process_cropped_folder_merges_portal_vein_and_confluence_components(
     assert len(skipped) == 1
     assert skipped[0]["source_label_ids"] == [27]
     assert details["organ_labels"] == ["portal_vein"]
+
+
+def test_process_cropped_folder_writes_anatomical_vessel_features(cropped_label_tar):
+    labels_xy = np.zeros((10, 10), dtype=np.uint16)
+    labels_xy[2, 2] = 3
+    labels_xy[3, 3] = 33
+    labels_xy[5:7, 2:4] = 30
+    labels_xy[2, 6] = 26
+    labels_xy[3, 6] = 27
+    labels_xy[3, 7] = 28
+    labels_xy[4, 7] = 29
+    labels_xy[0, 8] = 29
+    frame_dir = cropped_label_tar(labels_xy)
+
+    process_cropped_folder(frame_dir)
+
+    details = json.loads((frame_dir / DETAILS_NAME).read_text(encoding="utf-8"))
+    assert details["schema_version"] == "cropped-retrieval-features/v2"
+    assert details["anatomical_vessel_visualizations"] == {
+        "original_overlay_png": f"{FRAME_ID}_original_ivc_ao_pv_overlay.png",
+        "cropped_overlay_png": f"{FRAME_ID}_cropped_ivc_ao_pv_overlay.png",
+        "boundary_only_png": f"{FRAME_ID}_cropped_ivc_ao_pv_label_white.png",
+    }
+    assert [
+        (item["label"], item["label_id"], item["source_label_ids"], item["area_px"])
+        for item in details["anatomical_vessel_features"]
+    ] == [
+        ("aorta", 3, [3, 33], 2),
+        ("inferior_vena_cava", 30, [30], 4),
+        ("portal_venous_system", 26, [26, 27, 28, 29], 4),
+    ]
+    assert details["anatomical_vessel_skipped_components"] == [
+        {
+            "label": "portal_venous_system",
+            "label_id": 26,
+            "label_desc": "门静脉系",
+            "component_index": 2,
+            "area_px": 1,
+            "centroid_px": [0.0, 8.0],
+            "source_label_ids": [29],
+            "reason": "touches_image_edge",
+        }
+    ]
+    assert {item["label"] for item in details["features"]} <= {"vein", "artery"}
+    assert {item["label"] for item in details["adapter_record"]["features"]} <= {
+        "vein",
+        "artery",
+    }
 
 
 def test_process_cropped_folder_writes_unindexed_record_without_nifti(cropped_label_tar):

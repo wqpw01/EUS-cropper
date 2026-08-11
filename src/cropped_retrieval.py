@@ -17,7 +17,7 @@ from scipy import ndimage
 
 VEIN_LABEL_IDS = frozenset({26, 27, 28, 29, 30, 31, 32})
 ARTERY_LABEL_IDS = frozenset({3, 33, 34, 35, 36, 37, 38, 39, 40})
-_SCHEMA_VERSION = "cropped-retrieval-features/v1"
+_SCHEMA_VERSION = "cropped-retrieval-features/v2"
 ORGAN_LABEL_BY_ID = {
     1: "liver",
     2: "liver",
@@ -86,10 +86,17 @@ class _VesselSpec:
     label: str
     label_id: int
     source_label_ids: frozenset[int]
+    label_desc: str | None = None
+    include_source_label_ids: bool = False
 
 
-_VESSEL_SPECS = (
-    _VesselSpec("vein", 26, PORTAL_SOURCE_LABEL_IDS),
+_GENERIC_VESSEL_SPECS = (
+    _VesselSpec(
+        "vein",
+        26,
+        PORTAL_SOURCE_LABEL_IDS,
+        include_source_label_ids=True,
+    ),
     *(
         _VesselSpec("vein", label_id, frozenset({label_id}))
         for label_id in (28, 29, 30, 31, 32)
@@ -97,6 +104,17 @@ _VESSEL_SPECS = (
     *(
         _VesselSpec("artery", label_id, frozenset({label_id}))
         for label_id in (3, 33, 34, 35, 36, 37, 38, 39, 40)
+    ),
+)
+_ANATOMICAL_VESSEL_SPECS = (
+    _VesselSpec("aorta", 3, frozenset({3, 33}), "腹主动脉", True),
+    _VesselSpec("inferior_vena_cava", 30, frozenset({30}), "下腔静脉", True),
+    _VesselSpec(
+        "portal_venous_system",
+        26,
+        frozenset({26, 27, 28, 29}),
+        "门静脉系",
+        True,
     ),
 )
 
@@ -276,10 +294,11 @@ def _organ_metadata(metadata: dict[str, Any], labels: np.ndarray) -> dict[str, A
     }
 
 
-def _features(
+def _extract_features(
     labels: np.ndarray,
     table: dict[int, dict[str, Any]],
     pixel_spacing_mm: tuple[float, float],
+    specs: tuple[_VesselSpec, ...],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Return complete vessel components and edge-touching components separately."""
     height, width = labels.shape
@@ -288,7 +307,7 @@ def _features(
     features: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
 
-    for spec in _VESSEL_SPECS:
+    for spec in specs:
         components, count = ndimage.label(
             np.isin(labels, tuple(spec.source_label_ids)), structure=structure
         )
@@ -299,7 +318,8 @@ def _features(
             base = {
                 "label": spec.label,
                 "label_id": spec.label_id,
-                "label_desc": table.get(spec.label_id, {}).get(
+                "label_desc": spec.label_desc
+                or table.get(spec.label_id, {}).get(
                     "description", f"label_{spec.label_id}"
                 ),
                 "component_index": component_index,
@@ -309,7 +329,7 @@ def _features(
                     float(np.mean(y_values)),
                 ],
             }
-            if spec.source_label_ids == PORTAL_SOURCE_LABEL_IDS:
+            if spec.include_source_label_ids:
                 base["source_label_ids"] = sorted(
                     {
                         int(label_id)
@@ -338,6 +358,24 @@ def _features(
             )
 
     return features, skipped
+
+
+def _features(
+    labels: np.ndarray,
+    table: dict[int, dict[str, Any]],
+    pixel_spacing_mm: tuple[float, float],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    return _extract_features(labels, table, pixel_spacing_mm, _GENERIC_VESSEL_SPECS)
+
+
+def _anatomical_vessel_features(
+    labels: np.ndarray,
+    table: dict[int, dict[str, Any]],
+    pixel_spacing_mm: tuple[float, float],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    return _extract_features(
+        labels, table, pixel_spacing_mm, _ANATOMICAL_VESSEL_SPECS
+    )
 
 
 def _gallery_record(
@@ -397,7 +435,12 @@ def _gallery_record(
 
 
 def _validate_visual_images(directory: Path, stem: str, image_size: tuple[int, int]) -> None:
-    for suffix in ("_cropped_vessel_label_white.png", "_cropped_vessel_overlay.png"):
+    for suffix in (
+        "_cropped_vessel_label_white.png",
+        "_cropped_vessel_overlay.png",
+        "_cropped_ivc_ao_pv_overlay.png",
+        "_cropped_ivc_ao_pv_label_white.png",
+    ):
         path = directory / f"{stem}{suffix}"
         if not path.is_file():
             continue
@@ -416,6 +459,8 @@ def _write_artifacts(
     label_source: str,
     features: list[dict[str, Any]],
     skipped: list[dict[str, Any]],
+    anatomical_features: list[dict[str, Any]],
+    anatomical_skipped: list[dict[str, Any]],
     width_mm: float,
     length_mm: float,
     pixel_spacing_mm: tuple[float, float],
@@ -431,6 +476,11 @@ def _write_artifacts(
         "label_tar": f"{stem}_cropped_jpg_Label.tar",
         "label_source": label_source,
         "label_white_png": f"{stem}_cropped_vessel_label_white.png",
+        "anatomical_vessel_visualizations": {
+            "original_overlay_png": f"{stem}_original_ivc_ao_pv_overlay.png",
+            "cropped_overlay_png": f"{stem}_cropped_ivc_ao_pv_overlay.png",
+            "boundary_only_png": f"{stem}_cropped_ivc_ao_pv_label_white.png",
+        },
         "image_size_px": [width, height],
         "crop_size_mm": [width_mm, length_mm],
         "pixel_spacing_mm": list(pixel_spacing_mm),
@@ -441,6 +491,8 @@ def _write_artifacts(
         "organ_labels": organ_metadata["organ_labels"],
         "features": features,
         "skipped_components": skipped,
+        "anatomical_vessel_features": anatomical_features,
+        "anatomical_vessel_skipped_components": anatomical_skipped,
         "adapter_record": record,
     }
     feature_path.write_text(
@@ -497,7 +549,11 @@ def process_cropped_folder(
         length_mm / (expected_height - 1),
     )
     organ_metadata = _organ_metadata(metadata, labels)
-    features, skipped = _features(labels, _label_table(metadata), pixel_spacing_mm)
+    table = _label_table(metadata)
+    features, skipped = _features(labels, table, pixel_spacing_mm)
+    anatomical_features, anatomical_skipped = _anatomical_vessel_features(
+        labels, table, pixel_spacing_mm
+    )
     record = _gallery_record(
         stem, features, width_mm, length_mm, pixel_spacing_mm, organ_metadata
     )
@@ -508,6 +564,8 @@ def process_cropped_folder(
         label_source,
         features,
         skipped,
+        anatomical_features,
+        anatomical_skipped,
         width_mm,
         length_mm,
         pixel_spacing_mm,
