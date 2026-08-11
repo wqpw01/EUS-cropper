@@ -28,6 +28,8 @@
 
 在 `tests/test_cropped_retrieval.py` 中增加以下测试；它使用已有 `cropped_label_tar` 夹具，其 NIfTI 数组保持 `[x, y]` 轴顺序：
 
+这里“不闭合”固定定义为连通域触及裁剪标签图边缘；不读取 JSON 多边形的闭合标记。三张新可视化图不会使用这个过滤条件，仍绘制所有三类来源标签。
+
 ```python
 def test_process_cropped_folder_writes_anatomical_vessel_features(cropped_label_tar):
     labels_xy = np.zeros((10, 10), dtype=np.uint16)
