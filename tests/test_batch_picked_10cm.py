@@ -29,6 +29,11 @@ def _label_data() -> dict:
                 {"ID": 15, "Color": [0, 85, 0, 255]},
                 {"ID": 18, "Desc": "脾脏", "Color": [233, 150, 122, 255]},
                 {"ID": 26, "Color": [170, 85, 255, 255]},
+                {"ID": 27, "Color": [170, 85, 255, 255]},
+                {"ID": 28, "Color": [170, 85, 255, 255]},
+                {"ID": 29, "Color": [170, 85, 255, 255]},
+                {"ID": 30, "Color": [0, 0, 255, 255]},
+                {"ID": 31, "Color": [0, 188, 212, 255]},
                 {"ID": 33, "Color": [255, 0, 0, 255]},
             ],
             "FrameLabelModel": {
@@ -68,6 +73,60 @@ def _label_data() -> dict:
                             {"Pos": [800, 200, 0.0]},
                             {"Pos": [750, 200, 0.0]},
                         ],
+                    },
+                    {
+                        "labelType": 3,
+                        "Points": [
+                            {"Pos": [650, 180, 0.0]},
+                            {"Pos": [670, 180, 0.0]},
+                            {"Pos": [670, 200, 0.0]},
+                            {"Pos": [650, 200, 0.0]},
+                        ],
+                    },
+                    {
+                        "labelType": 30,
+                        "Points": [
+                            {"Pos": [730, 180, 0.0]},
+                            {"Pos": [750, 180, 0.0]},
+                            {"Pos": [750, 200, 0.0]},
+                            {"Pos": [730, 200, 0.0]},
+                        ],
+                    },
+                    {
+                        "labelType": 27,
+                        "Points": [
+                            {"Pos": [790, 180, 0.0]},
+                            {"Pos": [810, 180, 0.0]},
+                            {"Pos": [810, 200, 0.0]},
+                            {"Pos": [790, 200, 0.0]},
+                        ],
+                    },
+                    {
+                        "labelType": 28,
+                        "Points": [
+                            {"Pos": [830, 180, 0.0]},
+                            {"Pos": [850, 180, 0.0]},
+                            {"Pos": [850, 200, 0.0]},
+                            {"Pos": [830, 200, 0.0]},
+                        ],
+                    },
+                    {
+                        "labelType": 29,
+                        "Points": [
+                            {"Pos": [870, 180, 0.0]},
+                            {"Pos": [890, 180, 0.0]},
+                            {"Pos": [890, 200, 0.0]},
+                            {"Pos": [870, 200, 0.0]},
+                        ],
+                    },
+                    {
+                        "labelType": 31,
+                        "Points": [
+                            {"Pos": [910, 180, 0.0]},
+                            {"Pos": [930, 180, 0.0]},
+                            {"Pos": [930, 200, 0.0]},
+                            {"Pos": [910, 200, 0.0]},
+                        ],
                     }
                 ]
             }
@@ -80,6 +139,11 @@ def _source_nifti_bytes(tmp_path) -> bytes:
     labels_xy[700:702, 200:202] = 26
     labels_xy[800:802, 300:302] = 3
     labels_xy[900:902, 250:252] = 18
+    labels_xy[730:732, 180:182] = 30
+    labels_xy[790:792, 180:182] = 27
+    labels_xy[830:832, 180:182] = 28
+    labels_xy[870:872, 180:182] = 29
+    labels_xy[910:912, 180:182] = 31
     nifti_path = tmp_path / "source_labels.nii.gz"
     nib.Nifti1Image(labels_xy, np.eye(4)).to_filename(nifti_path)
     return nifti_path.read_bytes()
@@ -161,6 +225,9 @@ def test_run_batch_writes_retrieval_artifacts_with_vessel_only_visualizations(tm
         "frame_00000001_cropped_overlay.png",
         "frame_00000001_cropped_vessel_overlay.png",
         "frame_00000001_cropped_vessel_label_white.png",
+        "frame_00000001_original_ivc_ao_pv_overlay.png",
+        "frame_00000001_cropped_ivc_ao_pv_overlay.png",
+        "frame_00000001_cropped_ivc_ao_pv_label_white.png",
         "frame_00000001_cropped_retrieval_features.json",
         "frame_00000001_cropped_gallery.jsonl",
     }
@@ -191,17 +258,67 @@ def test_run_batch_writes_retrieval_artifacts_with_vessel_only_visualizations(tm
             for color in np.unique(np.asarray(vessel_labels).reshape(-1, 3), axis=0)
         }
         assert colors <= {(255, 255, 255), (255, 82, 0), (0, 188, 212)}
+    with Image.open(frame_dir / "frame_00000001_original_ivc_ao_pv_overlay.png") as image:
+        assert image.size == (1920, 1080)
+    with Image.open(frame_dir / "frame_00000001_cropped_ivc_ao_pv_overlay.png") as image:
+        assert image.size == (960, 960)
+    with Image.open(frame_dir / "frame_00000001_cropped_ivc_ao_pv_label_white.png") as image:
+        assert image.size == (960, 960)
+        assert image.getpixel((0, 50)) == (170, 85, 255)
+        assert image.getpixel((47, 57)) == (255, 0, 0)
+        assert image.getpixel((127, 57)) == (0, 0, 255)
+        assert {
+            image.getpixel((x, 57)) for x in (187, 227, 267)
+        } == {(170, 85, 255)}
+        colors = {
+            tuple(color)
+            for color in np.unique(np.asarray(image).reshape(-1, 3), axis=0)
+        }
+        assert colors <= {
+            (255, 255, 255),
+            (255, 0, 0),
+            (0, 0, 255),
+            (170, 85, 255),
+        }
+        assert {(255, 0, 0), (0, 0, 255), (170, 85, 255)} <= colors
 
     details = json.loads(
         (frame_dir / "frame_00000001_cropped_retrieval_features.json").read_text(
             encoding="utf-8"
         )
     )
-    assert [feature["label_id"] for feature in details["features"]] == [26, 3]
+    assert details["schema_version"] == "cropped-retrieval-features/v2"
+    assert [feature["label_id"] for feature in details["features"]] == [
+        26,
+        26,
+        28,
+        29,
+        30,
+        31,
+        3,
+    ]
+    assert details["anatomical_vessel_visualizations"] == {
+        "original_overlay_png": "frame_00000001_original_ivc_ao_pv_overlay.png",
+        "cropped_overlay_png": "frame_00000001_cropped_ivc_ao_pv_overlay.png",
+        "boundary_only_png": "frame_00000001_cropped_ivc_ao_pv_label_white.png",
+    }
+    assert {
+        (feature["label"], tuple(feature["source_label_ids"]))
+        for feature in details["anatomical_vessel_features"]
+    } == {
+        ("aorta", (3,)),
+        ("inferior_vena_cava", (30,)),
+        ("portal_venous_system", (26,)),
+        ("portal_venous_system", (27,)),
+        ("portal_venous_system", (28,)),
+        ("portal_venous_system", (29,)),
+    }
+    assert details["anatomical_vessel_skipped_components"] == []
     assert details["frame_label_organ_ids"] == [14]
-    assert details["cropped_nifti_organ_ids"] == [3, 18, 26]
+    assert details["cropped_nifti_organ_ids"] == [3, 18, 26, 27, 30]
     assert details["organ_labels"] == [
         "aorta",
+        "inferior_vena_cava",
         "liver",
         "portal_vein",
         "spleen",

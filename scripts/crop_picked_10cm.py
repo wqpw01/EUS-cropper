@@ -156,6 +156,28 @@ def _save_cropped_image(image: Image.Image, path: Path) -> None:
         image.save(path)
 
 
+def _validate_anatomical_vessel_images(
+    original_path: Path,
+    cropped_overlay_path: Path,
+    cropped_white_path: Path,
+    original_size: tuple[int, int],
+    cropped_size: tuple[int, int],
+) -> None:
+    for path, expected_size in (
+        (original_path, original_size),
+        (cropped_overlay_path, cropped_size),
+        (cropped_white_path, cropped_size),
+    ):
+        if not path.is_file():
+            raise ValueError(f"Missing anatomical vessel visualization: {path}")
+        with Image.open(path) as image:
+            if image.size != expected_size:
+                raise ValueError(
+                    "Anatomical vessel visualization size does not match expected size: "
+                    f"{path}"
+                )
+
+
 def _preflight(input_dir: Path) -> list[tuple[Path, Path]]:
     image_paths = find_image_files(input_dir)
     if not image_paths:
@@ -189,6 +211,15 @@ def _process_item(image_path: Path, label_path: Path, output_root: Path) -> bool
     cropped_white_label_path = frame_dir / f"{image_path.stem}_cropped_label_white.png"
     cropped_vessel_overlay_path = frame_dir / f"{image_path.stem}_cropped_vessel_overlay.png"
     cropped_vessel_white_path = frame_dir / f"{image_path.stem}_cropped_vessel_label_white.png"
+    original_anatomical_overlay_path = (
+        frame_dir / f"{image_path.stem}_original_ivc_ao_pv_overlay.png"
+    )
+    cropped_anatomical_overlay_path = (
+        frame_dir / f"{image_path.stem}_cropped_ivc_ao_pv_overlay.png"
+    )
+    cropped_anatomical_white_path = (
+        frame_dir / f"{image_path.stem}_cropped_ivc_ao_pv_label_white.png"
+    )
 
     shutil.copy2(image_path, original_image_path)
     shutil.copy2(label_path, original_label_path)
@@ -197,7 +228,11 @@ def _process_item(image_path: Path, label_path: Path, output_root: Path) -> bool
 
     with Image.open(image_path) as source_image:
         original_overlay = draw_label_outlines(source_image, label_data)
+        original_anatomical_overlay = draw_anatomical_vessel_outlines(
+            source_image, label_data
+        )
         cropped_image = crop_image_to_canvas(source_image)
+        original_image_size = source_image.size
 
     _save_cropped_image(cropped_image, cropped_image_path)
     original_overlay.save(original_overlay_path)
@@ -207,6 +242,21 @@ def _process_item(image_path: Path, label_path: Path, output_root: Path) -> bool
     draw_vessel_outlines(cropped_image, transformed_label).save(cropped_vessel_overlay_path)
     white_vessels = Image.new("RGB", cropped_image.size, "white")
     draw_vessel_outlines(white_vessels, transformed_label).save(cropped_vessel_white_path)
+    original_anatomical_overlay.save(original_anatomical_overlay_path)
+    draw_anatomical_vessel_outlines(cropped_image, transformed_label).save(
+        cropped_anatomical_overlay_path
+    )
+    anatomical_white = Image.new("RGB", cropped_image.size, "white")
+    draw_anatomical_vessel_outlines(anatomical_white, transformed_label).save(
+        cropped_anatomical_white_path
+    )
+    _validate_anatomical_vessel_images(
+        original_anatomical_overlay_path,
+        cropped_anatomical_overlay_path,
+        cropped_anatomical_white_path,
+        original_image_size,
+        cropped_image.size,
+    )
 
     suffix = _nifti_suffix(label_path)
     cropped_label_stem = Path(cropped_name).stem
