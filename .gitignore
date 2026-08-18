@@ -12,3 +12,11 @@ output/
 .venv/
 venv/
 .DS_Store
+
+# Private research data and reproducibility outputs
+data/
+input/
+results/
+*.tar
+*.nii
+*.nii.gz
