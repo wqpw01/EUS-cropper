@@ -6,10 +6,25 @@ import tarfile
 
 import nibabel as nib
 import numpy as np
+import pytest
 from PIL import Image
 
 import scripts.crop_picked_10cm as crop_picked_10cm
 from scripts.crop_picked_10cm import run_batch
+
+
+def test_build_parser_requires_explicit_input_and_output_directories():
+    parser = crop_picked_10cm.build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args([])
+
+    args = parser.parse_args(
+        ["--input-dir", "input", "--output-dir", "output"]
+    )
+
+    assert args.input_dir.name == "input"
+    assert args.output_dir.name == "output"
 
 
 def _add_tar_member(archive: tarfile.TarFile, name: str, content: bytes) -> None:

@@ -17,8 +17,6 @@ from src.picked_10cm import CROP_BOUNDS, crop_image_to_canvas, crop_label_tar
 from src.utils import find_image_files, get_label_tar_path
 
 
-DEFAULT_INPUT_DIR = Path("/mnt/c/Users/zhangyutang/Desktop/picked")
-DEFAULT_OUTPUT_DIR = Path("/mnt/c/Users/zhangyutang/Desktop/picked_10cm_cropped")
 CROP_REGION = CropRegion(*CROP_BOUNDS)
 VEIN_LABEL_IDS = {26, 27, 28, 29, 30, 31, 32}
 ARTERY_LABEL_IDS = {3, 33, 34, 35, 36, 37, 38, 39, 40}
@@ -275,7 +273,7 @@ def _process_item(image_path: Path, label_path: Path, output_root: Path) -> bool
     return bool(retrieval.record["features"])
 
 
-def run_batch(input_dir: Path = DEFAULT_INPUT_DIR, output_dir: Path = DEFAULT_OUTPUT_DIR) -> dict[str, int]:
+def run_batch(input_dir: Path, output_dir: Path) -> dict[str, int]:
     """Generate all per-frame crop artifacts without overwriting an existing result."""
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
@@ -306,11 +304,27 @@ def run_batch(input_dir: Path = DEFAULT_INPUT_DIR, output_dir: Path = DEFAULT_OU
     }
 
 
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Crop paired EUS images and labels to a fixed 10 cm square"
+    )
+    parser.add_argument(
+        "--input-dir",
+        type=Path,
+        required=True,
+        help="Flat directory containing paired 1920x1080 images and label TAR files",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="New output directory for per-frame crop artifacts",
+    )
+    return parser
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Crop picked data to a fixed 10 cm square")
-    parser.add_argument("--input-dir", type=Path, default=DEFAULT_INPUT_DIR)
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    args = parser.parse_args()
+    args = build_parser().parse_args()
 
     result = run_batch(args.input_dir, args.output_dir)
     print(f"Processed {result['processed']} of {result['total']} frames")
